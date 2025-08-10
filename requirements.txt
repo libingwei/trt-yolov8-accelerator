@@ -1,0 +1,8 @@
+# Python deps for export & tooling
+ultralytics>=8.2.0
+onnx>=1.14.0
+onnxruntime>=1.17.0
+opencv-python
+# Torch will be pulled by ultralytics if missing; pin optional here if needed
+# torch
+# torchvision

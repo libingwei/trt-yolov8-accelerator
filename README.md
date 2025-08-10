@@ -27,3 +27,26 @@
 # git remote add origin <your-repo-url>
 # git push -u origin main
 ```
+
+## 使用（最小流程）
+```bash
+# 1) 安装 Python 依赖（导出/验证 ONNX）
+pip install -r requirements.txt
+
+# 2) 导出 YOLOv8 ONNX（默认 yolov8n.pt，需要可自备权重）
+python scripts/export_yolov8_onnx.py --weights yolov8n.pt --outdir models --imgsz 640
+
+# 3) 构建 Docker（包含 TensorRT 与依赖）
+docker build -t trt-yolov8-accelerator:dev -f docker/Dockerfile .
+
+# 4) 进入容器后构建与运行占位程序
+# docker run --gpus all -it --rm -v $PWD:/workspace trt-yolov8-accelerator:dev bash
+# ./build/bin/onnx_to_trt_yolo
+# ./build/bin/yolo_trt_infer
+```
+
+说明：导出脚本默认优先使用 GPU（cuda:0），若不可用或失败会自动回退到 CPU。可手动指定：
+```bash
+python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
+python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
+```
