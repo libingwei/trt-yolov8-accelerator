@@ -50,3 +50,16 @@ docker build -t trt-yolov8-accelerator:dev -f docker/Dockerfile .
 python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
 python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
 ```
+
+## 推理与可视化
+```bash
+# 将导出的 ONNX 转为 TensorRT 引擎（FP16 示例）
+./build/bin/onnx_to_trt_yolo models/yolov8n.onnx models/yolov8n_fp16.trt --fp16 --min 1x3x320x320 --opt 1x3x640x640 --max 16x3x1280x1280
+
+# 运行推理并在当前目录生成 yolo_out.jpg
+./build/bin/yolo_trt_infer models/yolov8n_fp16.trt --image assets/sample.jpg --H 640 --W 640 --conf 0.25 --iou 0.5
+```
+
+注意：
+- 输出维度目前按 YOLOv8 导出默认布局解析（[N, max_det, 4+obj+num_classes] 或 [max_det, 4+... ]）。若你的导出图不同，请在 `src/yolo_trt_infer.cpp` 中调整解析逻辑或先使用 CPU NMS 验证。
+- 若未提供 `--image`，程序仅跑一次前向并打印张量尺寸。
