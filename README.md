@@ -1,5 +1,7 @@
 # trt-yolov8-accelerator (skeleton)
 
+[变更日志 / Changelog](./CHANGELOG.md)
+
 > 独立仓库最小骨架。你可以在此目录内 `git init` 并推送到 GitHub。
 
 ## 亮点（目标）
