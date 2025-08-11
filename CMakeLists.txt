@@ -34,20 +34,34 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 add_executable(onnx_to_trt_yolo
 	src/onnx_to_trt_yolo.cpp
 	src/yolo_int8_calibrator.cpp)
-# Prefer linking to a prebuilt shared utils library if available in the parent build
-if(TARGET trt_utils)
-	target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
-else()
-	# Resolve TRT libs from provided dir
-	find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-	find_library(NVONNXPARSER_LIB nvonnxparser HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-	target_link_libraries(onnx_to_trt_yolo PRIVATE CUDA::cudart ${NVINFER_LIB} ${NVONNXPARSER_LIB} ${OpenCV_LIBS})
+target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
+
+# If building with static trt_utils, we must link its dependencies here.
+if(NOT BUILD_SHARED_LIBS)
+    target_link_options(onnx_to_trt_yolo PRIVATE "-Wl,--no-as-needed")
+    find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+    find_library(NVONNXPARSER_LIB nvonnxparser HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+    find_library(NVINFER_PLUGIN_LIB nvinfer_plugin HINTS ${TENSORRT_LIBRARY_DIRS})
+    target_link_libraries(onnx_to_trt_yolo PRIVATE ${NVINFER_LIB} ${NVONNXPARSER_LIB})
+    if(NVINFER_PLUGIN_LIB)
+        target_link_libraries(onnx_to_trt_yolo PRIVATE ${NVINFER_PLUGIN_LIB})
+    endif()
+    target_link_options(onnx_to_trt_yolo PRIVATE "-Wl,--as-needed")
 endif()
 
+
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
-if(TARGET trt_utils)
-	target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
-else()
-	find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-	target_link_libraries(yolo_trt_infer PRIVATE CUDA::cudart ${NVINFER_LIB} ${OpenCV_LIBS})
+target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
+
+# If building with static trt_utils, we must link its dependencies here.
+if(NOT BUILD_SHARED_LIBS)
+    target_link_options(yolo_trt_infer PRIVATE "-Wl,--no-as-needed")
+    find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+    find_library(NVINFER_PLUGIN_LIB nvinfer_plugin HINTS ${TENSORRT_LIBRARY_DIRS})
+    target_link_libraries(yolo_trt_infer PRIVATE ${NVINFER_LIB})
+    if(NVINFER_PLUGIN_LIB)
+        target_link_libraries(yolo_trt_infer PRIVATE ${NVINFER_PLUGIN_LIB})
+    endif()
+    target_link_options(yolo_trt_infer PRIVATE "-Wl,--as-needed")
 endif()
+
