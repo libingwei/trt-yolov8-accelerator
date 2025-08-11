@@ -36,16 +36,25 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 add_executable(onnx_to_trt_yolo
 	src/onnx_to_trt_yolo.cpp
 	src/yolo_int8_calibrator.cpp)
-target_link_libraries(onnx_to_trt_yolo
-	PRIVATE
-	CUDA::cudart
-	${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
-	${TENSORRT_LIBRARY_DIRS}/libnvonnxparser.so
-	${OpenCV_LIBS})
+# Prefer linking to a prebuilt shared utils library if available in the parent build
+if(TARGET trt_utils)
+	target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
+else()
+	target_link_libraries(onnx_to_trt_yolo
+		PRIVATE
+		CUDA::cudart
+		${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
+		${TENSORRT_LIBRARY_DIRS}/libnvonnxparser.so
+		${OpenCV_LIBS})
+endif()
 
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
-target_link_libraries(yolo_trt_infer
-	PRIVATE
-	CUDA::cudart
-	${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
-	${OpenCV_LIBS})
+if(TARGET trt_utils)
+	target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
+else()
+	target_link_libraries(yolo_trt_infer
+		PRIVATE
+		CUDA::cudart
+		${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
+		${OpenCV_LIBS})
+endif()
