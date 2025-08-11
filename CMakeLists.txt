@@ -39,9 +39,3 @@ target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
 target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
 
-# The conditional linking logic for static builds is no longer needed here,
-# as trt_utils now correctly propagates its PUBLIC dependencies.
-# If you switch to a static build (`-DBUILD_SHARED_LIBS=OFF`), the executables
-# will correctly link against the necessary TensorRT libraries because
-# trt_utils specifies them as PUBLIC link dependencies.
-
