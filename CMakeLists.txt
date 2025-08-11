@@ -21,11 +21,9 @@ if(NOT CUDAToolkit_FOUND)
 	endif()
 endif()
 
-# TensorRT (paths match NVIDIA TensorRT container)
-set(TENSORRT_INCLUDE_DIRS /usr/include/x86_64-linux-gnu)
-set(TENSORRT_LIBRARY_DIRS /usr/lib/x86_64-linux-gnu)
-if(NOT EXISTS ${TENSORRT_INCLUDE_DIRS} OR NOT EXISTS ${TENSORRT_LIBRARY_DIRS})
-	message(FATAL_ERROR "TensorRT headers/libs not found. Check container/base image.")
+# TensorRT from parent project
+if(NOT TENSORRT_INCLUDE_DIRS OR NOT TENSORRT_LIBRARY_DIRS)
+	message(FATAL_ERROR "Expected TENSORRT_INCLUDE_DIRS/TENSORRT_LIBRARY_DIRS from parent CMake. Please configure at root.")
 endif()
 include_directories(${TENSORRT_INCLUDE_DIRS})
 
@@ -40,21 +38,16 @@ add_executable(onnx_to_trt_yolo
 if(TARGET trt_utils)
 	target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
 else()
-	target_link_libraries(onnx_to_trt_yolo
-		PRIVATE
-		CUDA::cudart
-		${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
-		${TENSORRT_LIBRARY_DIRS}/libnvonnxparser.so
-		${OpenCV_LIBS})
+	# Resolve TRT libs from provided dir
+	find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+	find_library(NVONNXPARSER_LIB nvonnxparser HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+	target_link_libraries(onnx_to_trt_yolo PRIVATE CUDA::cudart ${NVINFER_LIB} ${NVONNXPARSER_LIB} ${OpenCV_LIBS})
 endif()
 
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
 if(TARGET trt_utils)
 	target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
 else()
-	target_link_libraries(yolo_trt_infer
-		PRIVATE
-		CUDA::cudart
-		${TENSORRT_LIBRARY_DIRS}/libnvinfer.so
-		${OpenCV_LIBS})
+	find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
+	target_link_libraries(yolo_trt_infer PRIVATE CUDA::cudart ${NVINFER_LIB} ${OpenCV_LIBS})
 endif()

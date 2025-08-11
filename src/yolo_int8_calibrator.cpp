@@ -5,6 +5,7 @@
 #include <glob.h>
 #include <opencv2/opencv.hpp>
 #include <cuda_runtime_api.h>
+#include <fstream>
 
 #define CHECK(status) \
     do { auto ret = (status); if (ret != 0) { \
