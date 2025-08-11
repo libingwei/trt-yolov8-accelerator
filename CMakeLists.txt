@@ -36,32 +36,12 @@ add_executable(onnx_to_trt_yolo
 	src/yolo_int8_calibrator.cpp)
 target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
 
-# If building with static trt_utils, we must link its dependencies here.
-if(NOT BUILD_SHARED_LIBS)
-    target_link_options(onnx_to_trt_yolo PRIVATE "-Wl,--no-as-needed")
-    find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-    find_library(NVONNXPARSER_LIB nvonnxparser HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-    find_library(NVINFER_PLUGIN_LIB nvinfer_plugin HINTS ${TENSORRT_LIBRARY_DIRS})
-    target_link_libraries(onnx_to_trt_yolo PRIVATE ${NVINFER_LIB} ${NVONNXPARSER_LIB})
-    if(NVINFER_PLUGIN_LIB)
-        target_link_libraries(onnx_to_trt_yolo PRIVATE ${NVINFER_PLUGIN_LIB})
-    endif()
-    target_link_options(onnx_to_trt_yolo PRIVATE "-Wl,--as-needed")
-endif()
-
-
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
 target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
 
-# If building with static trt_utils, we must link its dependencies here.
-if(NOT BUILD_SHARED_LIBS)
-    target_link_options(yolo_trt_infer PRIVATE "-Wl,--no-as-needed")
-    find_library(NVINFER_LIB nvinfer HINTS ${TENSORRT_LIBRARY_DIRS} REQUIRED)
-    find_library(NVINFER_PLUGIN_LIB nvinfer_plugin HINTS ${TENSORRT_LIBRARY_DIRS})
-    target_link_libraries(yolo_trt_infer PRIVATE ${NVINFER_LIB})
-    if(NVINFER_PLUGIN_LIB)
-        target_link_libraries(yolo_trt_infer PRIVATE ${NVINFER_PLUGIN_LIB})
-    endif()
-    target_link_options(yolo_trt_infer PRIVATE "-Wl,--as-needed")
-endif()
+# The conditional linking logic for static builds is no longer needed here,
+# as trt_utils now correctly propagates its PUBLIC dependencies.
+# If you switch to a static build (`-DBUILD_SHARED_LIBS=OFF`), the executables
+# will correctly link against the necessary TensorRT libraries because
+# trt_utils specifies them as PUBLIC link dependencies.
 
