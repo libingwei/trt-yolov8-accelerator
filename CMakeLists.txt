@@ -35,7 +35,9 @@ add_executable(onnx_to_trt_yolo
 	src/onnx_to_trt_yolo.cpp
 	src/yolo_int8_calibrator.cpp)
 target_link_libraries(onnx_to_trt_yolo PRIVATE trt_utils ${OpenCV_LIBS})
+target_compile_options(onnx_to_trt_yolo PRIVATE -Wno-deprecated-declarations)
 
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
 target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
+target_compile_options(yolo_trt_infer PRIVATE -Wno-deprecated-declarations)
 

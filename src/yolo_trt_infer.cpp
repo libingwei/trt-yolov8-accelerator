@@ -9,13 +9,12 @@
 #include <iomanip>
 #include <cstring>
 
-#include "NvInfer.h"
-#include "cuda_runtime_api.h"
+#include <trt_utils/trt_runtime.h>
+#include <trt_utils/trt_common.h>
 
 #include <opencv2/opencv.hpp>
 
 class Logger : public nvinfer1::ILogger{ void log(Severity s, const char* m) noexcept override { if(s<=Severity::kWARNING) std::cout<<m<<"\n"; }};
-#define CHECK(x) do{ auto r=(x); if(r!=0){ std::cerr<<"CUDA error:"<<cudaGetErrorString(r)<<"\n"; std::abort();} }while(0)
 
 static std::vector<char> readAll(const std::string& p){ std::ifstream f(p, std::ios::binary); f.seekg(0,std::ios::end); size_t n=f.tellg(); f.seekg(0); std::vector<char> b(n); f.read(b.data(), n); return b; }
 
@@ -67,25 +66,12 @@ int main(int argc, char** argv){
 		else if(t=="--iou" && i+1<argc) iouTh=std::stof(argv[++i]);
 	}
 
-	Logger g;
-	auto data = readAll(eng);
-	auto rt = std::unique_ptr<nvinfer1::IRuntime>(nvinfer1::createInferRuntime(g));
-	auto engine = std::unique_ptr<nvinfer1::ICudaEngine>(rt->deserializeCudaEngine(data.data(), data.size()));
-	auto ctx = std::unique_ptr<nvinfer1::IExecutionContext>(engine->createExecutionContext());
-
-	std::string inName = firstByMode(*engine, nvinfer1::TensorIOMode::kINPUT);
-	std::string outName = firstByMode(*engine, nvinfer1::TensorIOMode::kOUTPUT);
-	if(inName.empty()||outName.empty()){ std::cerr<<"Failed to find IO tensors\n"; return 2; }
-
-	auto inShape = engine->getTensorShape(inName.c_str());
-	inShape.d[0]=B; inShape.d[2]=H; inShape.d[3]=W;
-	if(!ctx->setInputShape(inName.c_str(), inShape)){ std::cerr<<"setInputShape failed\n"; return 2; }
-
-	size_t inSize = 1; for(int i=0;i<inShape.nbDims;++i) inSize*=inShape.d[i];
-	auto outShape = ctx->getTensorShape(outName.c_str()); size_t outSize=1; for(int i=0;i<outShape.nbDims;++i) outSize*=std::max(1, outShape.d[i]);
-
-	void *dIn=nullptr,*dOut=nullptr; CHECK(cudaMalloc(&dIn, inSize*sizeof(float))); CHECK(cudaMalloc(&dOut, outSize*sizeof(float)));
-	ctx->setTensorAddress(inName.c_str(), dIn); ctx->setTensorAddress(outName.c_str(), dOut);
+	TrtLogger g; TrtRunner runner(g);
+	if(!runner.loadEngineFromFile(eng)){ std::cerr<<"Failed to load engine\n"; return 2; }
+	if(!runner.prepare(B, H, W)){ std::cerr<<"Failed to prepare runner\n"; return 2; }
+	auto outShape = runner.outputDims();
+	size_t inSize = runner.inputSize();
+	size_t outSize = runner.outputSize();
 
 	std::vector<float> hIn(inSize, 0.5f), hOut(outSize);
 	cv::Mat src;
@@ -104,9 +90,8 @@ int main(int argc, char** argv){
 		memcpy(hIn.data()+2*plane, ch[2].data, plane*sizeof(float));
 	}
 
-	CHECK(cudaMemcpy(dIn, hIn.data(), inSize*sizeof(float), cudaMemcpyHostToDevice));
-	cudaStream_t s; CHECK(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
-	ctx->enqueueV3(s); CHECK(cudaMemcpyAsync(hOut.data(), dOut, outSize*sizeof(float), cudaMemcpyDeviceToHost, s)); CHECK(cudaStreamSynchronize(s));
+	// Run once using default stream; TrtRunner manages device buffers
+	runner.run(1, hIn.data(), hOut.data(), /*useDefaultStream*/true);
 
 	// Try to decode YOLOv8 head: support layouts [B,N,C], [B,C,N], [N,C], [C,N]
 	if(!imagePath.empty()){
@@ -187,6 +172,6 @@ int main(int argc, char** argv){
 		std::cout<<"Ran once. in="<<inSize<<" out="<<outSize<<"\n";
 	}
 
-	CHECK(cudaFree(dIn)); CHECK(cudaFree(dOut)); CHECK(cudaStreamDestroy(s));
+	// Runner cleans up in destructor
 	return 0;
 }
