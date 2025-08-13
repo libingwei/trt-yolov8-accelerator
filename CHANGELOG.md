@@ -14,6 +14,18 @@
 ### Known
 - 解析逻辑基于通用布局推断，个别导出图可能需微调列含义；后续将以 TensorRT 插件实现 GPU 端 Decode+NMS。
 
+## [2025-08-13]
+### Added
+- 工具链与文档对齐：
+  - `onnx_to_trt_yolo` 增加占位参数 `--decode-plugin`，为后续构建期替换 head→plugin 铺路；默认行为不变。
+  - `yolo_trt_infer` 增加运行时后处理参数：`--decode cpu|plugin`、`--has-nms`、`--class-agnostic`、`--topk`。
+  - 共享库新增 `trt_utils::decode` 与 `trt_utils::nms`，并将 YOLO 预处理与标定统一到 letterbox 变体（可返回 pad/scale）。
+  - 文档更新：README 增补运行时/构建期开关说明与示例。
+### Changed
+- CMake：新增 `YOLO_BUILD_PLUGINS` 选项（默认 OFF），开启后构建 `decode_yolo_plugin` 占位库，便于后续 CUDA kernel 接入。
+### Known
+- `decode_yolo_plugin` 目前为接口骨架（IPluginV2DynamicExt），尚未实现 enqueue 逻辑；A/B 对比请使用 CPU 解码路径作为参考。
+
 ## [2025-08-09]
 ### Added
 - 初始骨架：

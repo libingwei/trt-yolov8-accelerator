@@ -8,13 +8,16 @@
 
 #include <trt_utils/trt_builder.h>
 #include <trt_utils/trt_common.h>
+#ifdef YOLO_BUILD_PLUGINS
+#include "../plugins/decode_yolo/decode_yolo_plugin.h"
+#endif
 
 // forward decl from calibrator cpp
 std::unique_ptr<nvinfer1::IInt8Calibrator> createYoloCalibrator(int,int,int,const std::string&,const std::string&);
 
 int main(int argc, char** argv){
 	if(argc<3){
-		std::cerr << "Usage: "<<argv[0]<<" <model.onnx> <output.trt|prefix> [--fp32|--fp16|--int8] [--calib-dir DIR] [--min SHAPE] [--opt SHAPE] [--max SHAPE]\n";
+		std::cerr << "Usage: "<<argv[0]<<" <model.onnx> <output.trt|prefix> [--fp32|--fp16|--int8] [--calib-dir DIR] [--min SHAPE] [--opt SHAPE] [--max SHAPE] [--decode-plugin]\n";
 		std::cerr << "  SHAPE supports HxW (e.g., 640x640) or NxCxHxW (e.g., 1x3x640x640). Batch is taken from --max if provided.\n";
 		return 1;
 	}
@@ -48,6 +51,7 @@ int main(int argc, char** argv){
 	}
 
 	// Parse named flags
+	bool useDecodePlugin=false;
 	for(int i=3;i<argc;++i){
 		std::string t = argv[i];
 		if(t=="--fp32") precisionFlag = "fp32";
@@ -57,6 +61,7 @@ int main(int argc, char** argv){
 		else if(t=="--min" && i+1<argc) { parseShape(argv[++i], minH, minW, nullptr); }
 		else if(t=="--opt" && i+1<argc) { parseShape(argv[++i], optH, optW, nullptr); }
 		else if(t=="--max" && i+1<argc) { parseShape(argv[++i], maxH, maxW, &maxBatchFromShape); }
+		else if(t=="--decode-plugin") { useDecodePlugin = true; }
 	}
 
 	if(precisionFlag.empty()){
@@ -90,7 +95,36 @@ int main(int argc, char** argv){
 		extCalib = createYoloCalibrator(8, calibW, calibH, calibDir, "yolo_int8.cache");
 	}
 
-	auto ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get());
+	std::unique_ptr<nvinfer1::IHostMemory> ser;
+    if(useDecodePlugin){
+#ifdef YOLO_BUILD_PLUGINS
+	// Register plugin creator to TRT registry
+	registerDecodeYoloPlugin();
+	ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get(), [&](nvinfer1::INetworkDefinition& net, nvinfer1::IBuilderConfig& cfg){
+			(void)cfg;
+			// Best-effort: take the last layer's first output as YOLO head and attach DecodeYoloPlugin
+			int nbLayers = net.getNbLayers();
+			if(nbLayers<=0) return;
+			auto* last = net.getLayer(nbLayers-1);
+			if(!last) return;
+			int nOuts = last->getNbOutputs();
+			if(nOuts<=0) return;
+			auto* head = last->getOutput(0);
+			// Clear existing outputs
+			int nT = net.getNbOutputs();
+			for(int i=0;i<nT;++i){ net.unmarkOutput(*net.getOutput(i)); }
+			// Create plugin and mark its output
+			auto plugin = new DecodeYoloPlugin("decode_yolo");
+			auto* lyr = net.addPluginV2(&head, 1, *plugin);
+			if(lyr){ net.markOutput(*lyr->getOutput(0)); }
+		});
+#else
+	std::cerr << "[warn] --decode-plugin requested but YOLO_BUILD_PLUGINS is OFF; building without plugin.\n";
+	ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get());
+#endif
+	} else {
+		ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get());
+	}
 	if(!ser){ std::cerr<<"Build failed\n"; return 2; }
 	// If output argument ends with .trt, use it directly; else append _<prec>.trt
 	auto endsWith = [](const std::string& s, const std::string& suf){ return s.size()>=suf.size() && s.compare(s.size()-suf.size(), suf.size(), suf)==0; };

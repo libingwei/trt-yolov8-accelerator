@@ -47,9 +47,16 @@ target_compile_options(yolo_trt_infer PRIVATE -Wno-deprecated-declarations)
 
 if(YOLO_BUILD_PLUGINS)
 	add_library(decode_yolo_plugin STATIC
-		plugins/decode_yolo/decode_yolo_plugin.h)
-	target_link_libraries(decode_yolo_plugin PRIVATE trt_utils)
+		plugins/decode_yolo/decode_yolo_plugin.h
+		plugins/decode_yolo/decode_yolo_plugin.cu)
+	target_link_libraries(decode_yolo_plugin PRIVATE trt_utils CUDA::cudart)
 	target_include_directories(decode_yolo_plugin PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/plugins)
+	set_target_properties(decode_yolo_plugin PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 	target_compile_features(decode_yolo_plugin PUBLIC cxx_std_17)
+	# Link plugin into tools and define macro for conditional registration
+	target_link_libraries(onnx_to_trt_yolo PRIVATE decode_yolo_plugin)
+	target_link_libraries(yolo_trt_infer PRIVATE decode_yolo_plugin)
+	target_compile_definitions(onnx_to_trt_yolo PRIVATE YOLO_BUILD_PLUGINS)
+	target_compile_definitions(yolo_trt_infer PRIVATE YOLO_BUILD_PLUGINS)
 endif()
 

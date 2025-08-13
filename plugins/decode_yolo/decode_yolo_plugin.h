@@ -30,16 +30,13 @@ public:
     }
 
     // IPluginV2DynamicExt
-    nvinfer1::DimsExprs getOutputDimensions(int, const nvinfer1::DimsExprs* inputs, int nbInputs, nvinfer1::IExprBuilder&) noexcept override {
-        // For placeholder, pass-through first input dims
-        return inputs[0];
-    }
+    nvinfer1::DimsExprs getOutputDimensions(int, const nvinfer1::DimsExprs* inputs, int nbInputs, nvinfer1::IExprBuilder&) noexcept override;
     bool supportsFormatCombination(int pos, const nvinfer1::PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept override {
         return inOut[pos].format == nvinfer1::TensorFormat::kLINEAR && (inOut[pos].type == nvinfer1::DataType::kFLOAT);
     }
     void configurePlugin(const nvinfer1::DynamicPluginTensorDesc*, int, const nvinfer1::DynamicPluginTensorDesc*, int) noexcept override {}
     size_t getWorkspaceSize(const nvinfer1::PluginTensorDesc*, int, const nvinfer1::PluginTensorDesc*, int) const noexcept override { return 0; }
-    int enqueue(const nvinfer1::PluginTensorDesc*, const nvinfer1::PluginTensorDesc*, const void* const*, void* const*, void*, cudaStream_t) noexcept override { return 0; }
+    int enqueue(const nvinfer1::PluginTensorDesc*, const nvinfer1::PluginTensorDesc*, const void* const*, void* const*, void*, cudaStream_t) noexcept override;
 
 private:
     std::string mLayerName;
@@ -59,3 +56,6 @@ private:
     std::string mNamespace;
     nvinfer1::PluginFieldCollection mFC{0, nullptr};
 };
+
+// Helper to register plugin creator into TensorRT registry (must be called before engine deserialization)
+extern "C" void registerDecodeYoloPlugin();

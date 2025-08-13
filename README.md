@@ -83,3 +83,28 @@ YOLO_MEAN=0,0,0 YOLO_STD=1,1,1 CALIB_RECURSIVE=1 \
 注意：
 - 输出维度目前按 YOLOv8 导出默认布局解析（[N, max_det, 4+obj+num_classes] 或 [max_det, 4+... ]）。若你的导出图不同，请在 `src/yolo_trt_infer.cpp` 中调整解析逻辑或先使用 CPU NMS 验证。
 - 若未提供 `--image`，程序仅跑一次前向并打印张量尺寸。
+
+### 运行时开关（解码与 NMS）
+
+`yolo_trt_infer` 支持以下与后处理相关的参数：
+
+- `--decode cpu|plugin`：选择解码路径（默认 `cpu`；`plugin` 表示解码在图内由插件完成，本程序不再做 CPU 解码）。
+- `--has-nms`：当导出的 ONNX 已包含 NMS（例如 `--nms` 导出）时，跳过本地解码与 NMS，直接绘制 [x1,y1,x2,y2,conf,cls]。
+- `--class-agnostic`：使用 class-agnostic NMS（默认开启）。
+- `--topk N`：NMS 后保留的最大框数（默认无限制）。
+
+示例：
+```bash
+# 已融合 NMS 的 ONNX（导出时使用 --nms）
+./build/bin/yolo_trt_infer models/yolov8n_fp16.trt --image assets/sample.jpg --H 640 --W 640 --has-nms
+
+# 使用 CPU 解码 + NMS，并限制 TopK
+./build/bin/yolo_trt_infer models/yolov8n_fp16.trt --image assets/sample.jpg --H 640 --W 640 --decode cpu --topk 100
+```
+
+### 构建期开关（插件占位）
+
+- CMake 选项：`-DYOLO_BUILD_PLUGINS=ON` 将构建解码插件目标（目前为占位骨架，便于后续实现 CUDA kernel）。
+- 转换工具：`onnx_to_trt_yolo` 提供 `--decode-plugin`，在构建期将 YOLO 头部替换为解码插件层（需配合 `-DYOLO_BUILD_PLUGINS=ON`）。
+
+说明：插件路径用于与 CPU 解码做 A/B 对比，确认数值一致性与性能差异。实际 CUDA 解码 kernel 与网络替换逻辑将分阶段补全。

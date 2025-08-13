@@ -16,6 +16,9 @@
 #include <trt_utils/trt_preprocess.h>
 #include <trt_utils/trt_vision.h>
 #include <trt_utils/trt_decode.h>
+#ifdef YOLO_BUILD_PLUGINS
+#include "../plugins/decode_yolo/decode_yolo_plugin.h"
+#endif
 
 class Logger : public nvinfer1::ILogger{ void log(Severity s, const char* m) noexcept override { if(s<=Severity::kWARNING) std::cout<<m<<"\n"; }};
 
@@ -31,11 +34,14 @@ static std::string firstByMode(const nvinfer1::ICudaEngine& e, nvinfer1::TensorI
 using TrtVision::Detection;
 
 int main(int argc, char** argv){
+#ifdef YOLO_BUILD_PLUGINS
+	registerDecodeYoloPlugin();
+#endif
 	if(argc<2){
-		std::cerr<<"Usage: "<<argv[0]<<" <engine.trt> [--image path] [--H 640] [--W 640] [--conf 0.25] [--iou 0.5] [--decode cpu|plugin]\n";
+		std::cerr<<"Usage: "<<argv[0]<<" <engine.trt> [--image path] [--H 640] [--W 640] [--conf 0.25] [--iou 0.5] [--decode cpu|plugin] [--has-nms] [--class-agnostic] [--topk N]\n";
 		return 1;
 	}
-	std::string eng=argv[1]; std::string imagePath; int H=640,W=640; float confTh=0.25f, iouTh=0.5f; int B=1; std::string decode="cpu";
+	std::string eng=argv[1]; std::string imagePath; int H=640,W=640; float confTh=0.25f, iouTh=0.5f; int B=1; std::string decode="cpu"; bool hasNms=false; bool classAgnostic=true; int topK=-1;
 	for(int i=2;i<argc;++i){ std::string t=argv[i];
 		if(t=="--image" && i+1<argc) imagePath=argv[++i];
 		else if(t=="--H" && i+1<argc) H=std::stoi(argv[++i]);
@@ -43,7 +49,12 @@ int main(int argc, char** argv){
 		else if(t=="--conf" && i+1<argc) confTh=std::stof(argv[++i]);
 		else if(t=="--iou" && i+1<argc) iouTh=std::stof(argv[++i]);
 		else if(t=="--decode" && i+1<argc) decode=argv[++i];
+		else if(t=="--has-nms") hasNms=true;
+		else if(t=="--class-agnostic") classAgnostic=true;
+		else if(t=="--topk" && i+1<argc) topK=std::stoi(argv[++i]);
 	}
+
+	// Note: --decode plugin 表示解码已在图内（插件）执行；此处无需额外处理。
 
 	TrtLogger g; TrtRunner runner(g);
 	if(!runner.loadEngineFromFile(eng)){ std::cerr<<"Failed to load engine\n"; return 2; }
@@ -85,7 +96,23 @@ int main(int argc, char** argv){
 			else { N=d1; C=d0; layout_NC=false; }
 		}
 	std::vector<Detection> dets;
-	if(N>0 && C>=6){
+		if(hasNms){
+			// Assume [N,6] already decoded & NMSed: [x1,y1,x2,y2,conf,cls]
+			std::vector<Detection> dets; dets.reserve(N);
+			const float* p = hOut.data();
+			for(int i=0;i<N;++i){
+				float x1=p[i*C+0], y1=p[i*C+1], x2=p[i*C+2], y2=p[i*C+3]; float conf=p[i*C+4]; int cls=(int)std::round(p[i*C+5]);
+				if(conf<confTh) continue; dets.push_back({cv::Rect2f(x1,y1,x2-x1,y2-y1), cls, conf});
+			}
+			// Draw directly
+			for(const auto& d: dets){
+				cv::rectangle(src, d.box, cv::Scalar(0,255,0), 2);
+				std::ostringstream ss; ss<<d.cls<<" "<<std::fixed<<std::setprecision(2)<<d.conf;
+				cv::putText(src, ss.str(), d.box.tl()+cv::Point2f(0,-3), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,255,0), 1);
+			}
+			cv::imwrite("yolo_out.jpg", src);
+			std::cout<<"Saved detections to yolo_out.jpg ("<<dets.size()<<" boxes)\n";
+		} else if(N>0 && C>=6){
 			const float* p = hOut.data();
 			auto get_val = [&](int i, int k){
 				// i in [0,N), k in [0,C)
@@ -111,7 +138,7 @@ int main(int argc, char** argv){
 				float y2 = std::min((float)src.rows-1, by + bh/2.f);
 				dets.push_back({cv::Rect2f(x1,y1,x2-x1,y2-y1), cls, conf});
 			}
-			auto keep = TrtVision::nms(dets, iouTh, true);
+			auto keep = TrtVision::nms(dets, iouTh, true, classAgnostic, topK);
 			for(int idx: keep){
 				const auto& d = dets[idx];
 				cv::rectangle(src, d.box, cv::Scalar(0,255,0), 2);
