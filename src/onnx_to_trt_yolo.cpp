@@ -10,6 +10,7 @@
 #include <trt_utils/trt_common.h>
 #ifdef YOLO_BUILD_PLUGINS
 #include "../plugins/decode_yolo/decode_yolo_plugin.h"
+#include "../plugins/efficient_nms/efficient_nms_plugin.h"
 #endif
 
 // forward decl from calibrator cpp
@@ -17,7 +18,7 @@ std::unique_ptr<nvinfer1::IInt8Calibrator> createYoloCalibrator(int,int,int,cons
 
 int main(int argc, char** argv){
 	if(argc<3){
-		std::cerr << "Usage: "<<argv[0]<<" <model.onnx> <output.trt|prefix> [--fp32|--fp16|--int8] [--calib-dir DIR] [--min SHAPE] [--opt SHAPE] [--max SHAPE] [--decode-plugin]\n";
+		std::cerr << "Usage: "<<argv[0]<<" <model.onnx> <output.trt|prefix> [--fp32|--fp16|--int8] [--calib-dir DIR] [--min SHAPE] [--opt SHAPE] [--max SHAPE] [--decode-plugin] [--nms-plugin] [--conf 0.25] [--iou 0.5] [--max-boxes 100]\n";
 		std::cerr << "  SHAPE supports HxW (e.g., 640x640) or NxCxHxW (e.g., 1x3x640x640). Batch is taken from --max if provided.\n";
 		return 1;
 	}
@@ -51,7 +52,9 @@ int main(int argc, char** argv){
 	}
 
 	// Parse named flags
-	bool useDecodePlugin=false;
+	bool useDecodePlugin=false, useNmsPlugin=false;
+	float confThreshold = 0.25f, iouThreshold = 0.5f;
+	int maxOutputBoxes = 100;
 	for(int i=3;i<argc;++i){
 		std::string t = argv[i];
 		if(t=="--fp32") precisionFlag = "fp32";
@@ -62,6 +65,10 @@ int main(int argc, char** argv){
 		else if(t=="--opt" && i+1<argc) { parseShape(argv[++i], optH, optW, nullptr); }
 		else if(t=="--max" && i+1<argc) { parseShape(argv[++i], maxH, maxW, &maxBatchFromShape); }
 		else if(t=="--decode-plugin") { useDecodePlugin = true; }
+		else if(t=="--nms-plugin") { useNmsPlugin = true; }
+		else if(t=="--conf" && i+1<argc) { confThreshold = std::stof(argv[++i]); }
+		else if(t=="--iou" && i+1<argc) { iouThreshold = std::stof(argv[++i]); }
+		else if(t=="--max-boxes" && i+1<argc) { maxOutputBoxes = std::stoi(argv[++i]); }
 	}
 
 	if(precisionFlag.empty()){
@@ -96,13 +103,18 @@ int main(int argc, char** argv){
 	}
 
 	std::unique_ptr<nvinfer1::IHostMemory> ser;
-    if(useDecodePlugin){
+    if(useDecodePlugin || useNmsPlugin){
 #ifdef YOLO_BUILD_PLUGINS
-	// Register plugin creator to TRT registry
-	registerDecodeYoloPlugin();
+	// Register plugin creators to TRT registry
+	if(useDecodePlugin) registerDecodeYoloPlugin();
+	if(useNmsPlugin) {
+		// Register EfficientNMS plugin
+		registerEfficientNmsPlugin();
+	}
+	
 	ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get(), [&](nvinfer1::INetworkDefinition& net, nvinfer1::IBuilderConfig& cfg){
 			(void)cfg;
-			// Best-effort: take the last layer's first output as YOLO head and attach DecodeYoloPlugin
+			// Best-effort: take the last layer's first output as YOLO head
 			int nbLayers = net.getNbLayers();
 			if(nbLayers<=0) return;
 			auto* last = net.getLayer(nbLayers-1);
@@ -110,16 +122,38 @@ int main(int argc, char** argv){
 			int nOuts = last->getNbOutputs();
 			if(nOuts<=0) return;
 			auto* head = last->getOutput(0);
+			
 			// Clear existing outputs
 			int nT = net.getNbOutputs();
 			for(int i=0;i<nT;++i){ net.unmarkOutput(*net.getOutput(i)); }
-			// Create plugin and mark its output
-			auto plugin = new DecodeYoloPlugin("decode_yolo");
-			auto* lyr = net.addPluginV2(&head, 1, *plugin);
-			if(lyr){ net.markOutput(*lyr->getOutput(0)); }
+			
+			nvinfer1::ITensor* currentOutput = head;
+			
+			// Add DecodeYolo plugin if requested
+			if(useDecodePlugin) {
+				auto decodePlugin = new DecodeYoloPlugin("decode_yolo");
+				auto* decodeLyr = net.addPluginV2(&currentOutput, 1, *decodePlugin);
+				if(decodeLyr) {
+					currentOutput = decodeLyr->getOutput(0);
+				}
+			}
+			
+			// Add EfficientNMS plugin if requested  
+			if(useNmsPlugin) {
+				auto nmsPlugin = new YoloTrt::EfficientNmsPlugin("efficient_nms", confThreshold, iouThreshold, maxOutputBoxes, true);
+				auto* nmsLyr = net.addPluginV2(&currentOutput, 1, *nmsPlugin);
+				if(nmsLyr) {
+					// Mark both outputs: boxes and valid counts
+					net.markOutput(*nmsLyr->getOutput(0)); // boxes [maxOutputBoxes, 6]
+					net.markOutput(*nmsLyr->getOutput(1)); // counts [1]
+				}
+			} else {
+				// Mark decode output only
+				net.markOutput(*currentOutput);
+			}
 		});
 #else
-	std::cerr << "[warn] --decode-plugin requested but YOLO_BUILD_PLUGINS is OFF; building without plugin.\n";
+	std::cerr << "[warn] Plugin(s) requested but YOLO_BUILD_PLUGINS is OFF; building without plugins.\n";
 	ser = teb.buildFromOnnx(onnx, opt, inW, inH, inName, extCalib.get());
 #endif
 	} else {

@@ -18,6 +18,7 @@
 #include <trt_utils/trt_decode.h>
 #ifdef YOLO_BUILD_PLUGINS
 #include "../plugins/decode_yolo/decode_yolo_plugin.h"
+#include "../plugins/efficient_nms/efficient_nms_plugin.h"
 #endif
 
 class Logger : public nvinfer1::ILogger{ void log(Severity s, const char* m) noexcept override { if(s<=Severity::kWARNING) std::cout<<m<<"\n"; }};
@@ -34,9 +35,6 @@ static std::string firstByMode(const nvinfer1::ICudaEngine& e, nvinfer1::TensorI
 using TrtVision::Detection;
 
 int main(int argc, char** argv){
-#ifdef YOLO_BUILD_PLUGINS
-	registerDecodeYoloPlugin();
-#endif
 	if(argc<2){
 		std::cerr<<"Usage: "<<argv[0]<<" <engine.trt> [--image path] [--H 640] [--W 640] [--conf 0.25] [--iou 0.5] [--decode cpu|plugin] [--has-nms] [--class-agnostic] [--topk N]\n";
 		return 1;
@@ -53,6 +51,17 @@ int main(int argc, char** argv){
 		else if(t=="--class-agnostic") classAgnostic=true;
 		else if(t=="--topk" && i+1<argc) topK=std::stoi(argv[++i]);
 	}
+
+#ifdef YOLO_BUILD_PLUGINS
+	// Register plugins conditionally based on usage
+	if(decode == "plugin") {
+		registerDecodeYoloPlugin();
+	}
+	if(hasNms) {
+		// Register EfficientNMS plugin for engines that have NMS integrated
+		registerEfficientNmsPlugin();
+	}
+#endif
 
 	// Note: --decode plugin 表示解码已在图内（插件）执行；此处无需额外处理。
 
@@ -90,15 +99,16 @@ int main(int argc, char** argv){
 			int d0 = outShape.d[0], d1 = outShape.d[1], d2 = outShape.d[2];
 			if(d1> d2){ N=d1; C=d2; layout_NC=true; }
 			else { N=d2; C=d1; layout_NC=false; }
-		if(N>0 && C>=6){
+		} else if(nbDims==2){
 			int d0 = outShape.d[0], d1 = outShape.d[1];
 			if(d0> d1){ N=d0; C=d1; layout_NC=true; }
 			else { N=d1; C=d0; layout_NC=false; }
 		}
-	std::vector<Detection> dets;
+		
+		std::vector<Detection> dets;
 		if(hasNms){
 			// Assume [N,6] already decoded & NMSed: [x1,y1,x2,y2,conf,cls]
-			std::vector<Detection> dets; dets.reserve(N);
+			dets.reserve(N);
 			const float* p = hOut.data();
 			for(int i=0;i<N;++i){
 				float x1=p[i*C+0], y1=p[i*C+1], x2=p[i*C+2], y2=p[i*C+3]; float conf=p[i*C+4]; int cls=(int)std::round(p[i*C+5]);
@@ -114,30 +124,23 @@ int main(int argc, char** argv){
 			std::cout<<"Saved detections to yolo_out.jpg ("<<dets.size()<<" boxes)\n";
 		} else if(N>0 && C>=6){
 			const float* p = hOut.data();
-			auto get_val = [&](int i, int k){
+			auto get_val = [&](int i, int k) -> const float* {
 				// i in [0,N), k in [0,C)
 				if(nbDims==3){
 					if(layout_NC) return p + i*C + k; // [B,N,C]
-			std::vector<Detection> dets;
+					else return p + k*N + i; // [B,C,N]
 				} else { // nbDims==2
 					if(layout_NC) return p + i*C + k; // [N,C]
-				// Flatten to contiguous [N,C]
-				std::vector<float> flat(N*C);
-				for(int i=0;i<N;++i){ for(int k=0;k<C;++k){ flat[i*C+k] = *get_val(i,k); } }
-				TrtDecode::YoloDecodeConfig cfg; cfg.alreadyDecoded = true; cfg.hasObjectness=false; cfg.numClasses=C-5;
-				auto ydets = TrtDecode::decode(flat.data(), N, C, cfg, confTh, lb.padX, lb.padY, lb.scale, src.cols, src.rows, W, H);
-				dets.reserve(ydets.size()); for(auto& d: ydets) dets.push_back({d.box, d.cls, d.conf});
-						x1 = std::max(0.f, nx1); y1=std::max(0.f, ny1);
-				std::vector<float> flat(N*C);
-				for(int i=0;i<N;++i){ for(int k=0;k<C;++k){ flat[i*C+k] = *get_val(i,k); } }
-				TrtDecode::YoloDecodeConfig cfg; cfg.alreadyDecoded = false; cfg.hasObjectness = (C>=85); cfg.numClasses = C - (cfg.hasObjectness?5:4);
-				auto ydets = TrtDecode::decode(flat.data(), N, C, cfg, confTh, lb.padX, lb.padY, lb.scale, src.cols, src.rows, W, H);
-				dets.reserve(ydets.size()); for(auto& d: ydets) dets.push_back({d.box, d.cls, d.conf});
-				float y1 = std::max(0.f, by - bh/2.f);
-				float x2 = std::min((float)src.cols-1, bx + bw/2.f);
-				float y2 = std::min((float)src.rows-1, by + bh/2.f);
-				dets.push_back({cv::Rect2f(x1,y1,x2-x1,y2-y1), cls, conf});
-			}
+					else return p + k*N + i; // [C,N]
+				}
+			};
+			
+			// Flatten to contiguous [N,C]
+			std::vector<float> flat(N*C);
+			for(int i=0;i<N;++i){ for(int k=0;k<C;++k){ flat[i*C+k] = *get_val(i,k); } }
+			TrtDecode::YoloDecodeConfig cfg; cfg.alreadyDecoded = false; cfg.hasObjectness = (C>=85); cfg.numClasses = C - (cfg.hasObjectness?5:4);
+			auto ydets = TrtDecode::decode(flat.data(), N, C, cfg, confTh, lb.padX, lb.padY, lb.scale, src.cols, src.rows, W, H);
+			dets.reserve(ydets.size()); for(auto& d: ydets) dets.push_back({d.box, d.cls, d.conf});
 			auto keep = TrtVision::nms(dets, iouTh, true, classAgnostic, topK);
 			for(int idx: keep){
 				const auto& d = dets[idx];
