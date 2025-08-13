@@ -13,6 +13,8 @@
 #include <trt_utils/trt_common.h>
 
 #include <opencv2/opencv.hpp>
+#include <trt_utils/trt_preprocess.h>
+#include <trt_utils/trt_vision.h>
 
 class Logger : public nvinfer1::ILogger{ void log(Severity s, const char* m) noexcept override { if(s<=Severity::kWARNING) std::cout<<m<<"\n"; }};
 
@@ -25,45 +27,21 @@ static std::string firstByMode(const nvinfer1::ICudaEngine& e, nvinfer1::TensorI
 	return std::string();
 }
 
-struct LetterboxInfo{ float scale; int padX; int padY; int outW; int outH; };
-static cv::Mat letterbox(const cv::Mat& img, int dstW, int dstH, LetterboxInfo& info){
-	int iw=img.cols, ih=img.rows; float s = std::min(dstW/(float)iw, dstH/(float)ih);
-	int nw = std::round(iw*s), nh = std::round(ih*s);
-	int padX = (dstW - nw)/2, padY = (dstH - nh)/2;
-	cv::Mat r; cv::resize(img, r, cv::Size(nw, nh));
-	cv::Mat canvas(dstH, dstW, img.type(), cv::Scalar(114,114,114));
-	r.copyTo(canvas(cv::Rect(padX, padY, nw, nh)));
-	info = {s, padX, padY, dstW, dstH};
-	return canvas;
-}
-
-static float iou(const cv::Rect2f& a, const cv::Rect2f& b){
-	float inter = (a & b).area(); float uni = a.area()+b.area()-inter; return uni>0? inter/uni: 0.f;
-}
-
-struct Det{ cv::Rect2f box; int cls; float conf; };
-static std::vector<int> nms(const std::vector<Det>& dets, float iouTh){
-	std::vector<int> order(dets.size()); std::iota(order.begin(), order.end(), 0);
-	std::sort(order.begin(), order.end(), [&](int a,int b){return dets[a].conf>dets[b].conf;});
-	std::vector<int> keep; std::vector<char> removed(dets.size(),0);
-	for(size_t i=0;i<order.size();++i){ int idx=order[i]; if(removed[idx]) continue; keep.push_back(idx);
-		for(size_t j=i+1;j<order.size();++j){ int idx2=order[j]; if(removed[idx2]) continue; if(iou(dets[idx].box, dets[idx2].box)>iouTh) removed[idx2]=1; }
-	}
-	return keep;
-}
+using TrtVision::Detection;
 
 int main(int argc, char** argv){
 	if(argc<2){
-		std::cerr<<"Usage: "<<argv[0]<<" <engine.trt> [--image path] [--H 640] [--W 640] [--conf 0.25] [--iou 0.5]\n";
+		std::cerr<<"Usage: "<<argv[0]<<" <engine.trt> [--image path] [--H 640] [--W 640] [--conf 0.25] [--iou 0.5] [--decode cpu|plugin]\n";
 		return 1;
 	}
-	std::string eng=argv[1]; std::string imagePath; int H=640,W=640; float confTh=0.25f, iouTh=0.5f; int B=1;
+	std::string eng=argv[1]; std::string imagePath; int H=640,W=640; float confTh=0.25f, iouTh=0.5f; int B=1; std::string decode="cpu";
 	for(int i=2;i<argc;++i){ std::string t=argv[i];
 		if(t=="--image" && i+1<argc) imagePath=argv[++i];
 		else if(t=="--H" && i+1<argc) H=std::stoi(argv[++i]);
 		else if(t=="--W" && i+1<argc) W=std::stoi(argv[++i]);
 		else if(t=="--conf" && i+1<argc) confTh=std::stof(argv[++i]);
 		else if(t=="--iou" && i+1<argc) iouTh=std::stof(argv[++i]);
+		else if(t=="--decode" && i+1<argc) decode=argv[++i];
 	}
 
 	TrtLogger g; TrtRunner runner(g);
@@ -79,9 +57,7 @@ int main(int argc, char** argv){
 	if(!imagePath.empty()){
 		src = cv::imread(imagePath);
 		if(src.empty()){ std::cerr<<"Failed to read image: "<<imagePath<<"\n"; return 3; }
-		cv::Mat lbimg = letterbox(src, W, H, lb);
-		cv::Mat rgb; cv::cvtColor(lbimg, rgb, cv::COLOR_BGR2RGB);
-		cv::Mat f; rgb.convertTo(f, CV_32FC3, 1.0/255.0);
+		cv::Mat f = preprocessLetterboxWithMeanStd(src, W, H, /*toRGB*/true, /*scaleTo01*/true, nullptr, nullptr, cv::Scalar(114,114,114), &lb);
 		std::vector<cv::Mat> ch; cv::split(f, ch);
 		size_t plane = (size_t)W*H;
 		// CHW
@@ -107,8 +83,8 @@ int main(int argc, char** argv){
 			if(d0> d1){ N=d0; C=d1; layout_NC=true; }
 			else { N=d1; C=d0; layout_NC=false; }
 		}
-		std::vector<Det> dets;
-		if(N>0 && C>=6){
+	std::vector<Detection> dets;
+	if(N>0 && C>=6){
 			const float* p = hOut.data();
 			auto get_val = [&](int i, int k){
 				// i in [0,N), k in [0,C)
@@ -156,7 +132,7 @@ int main(int argc, char** argv){
 				float y2 = std::min((float)src.rows-1, by + bh/2.f);
 				dets.push_back({cv::Rect2f(x1,y1,x2-x1,y2-y1), cls, conf});
 			}
-			auto keep = nms(dets, iouTh);
+			auto keep = TrtVision::nms(dets, iouTh, true);
 			for(int idx: keep){
 				const auto& d = dets[idx];
 				cv::rectangle(src, d.box, cv::Scalar(0,255,0), 2);

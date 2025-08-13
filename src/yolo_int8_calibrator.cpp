@@ -26,10 +26,12 @@ public:
     imgs = TrtHelpers::collectImages(dir, {"jpg","JPG","jpeg","JPEG","png","PNG"}, recursive);
         if(imgs.empty()) { std::cerr<<"No calibration images in "<<dir<<" (supported: .jpg/.jpeg/.png)\n"; }
 
-        // Read preprocess options from env (reuse shared convention)
+        // Read preprocess options from env
         if (const char* e = std::getenv("IMAGENET_CENTER_CROP")) {
             std::string v = e; if (v=="1" || v=="true") optCenterCrop = true;
         }
+        // YOLO: use letterbox by default to align with inference; can disable via YOLO_LETTERBOX=0
+        yoloLetterbox = true; if(const char* e = std::getenv("YOLO_LETTERBOX")){ std::string v=e; if(v=="0"||v=="false") yoloLetterbox=false; }
     // YOLO mean/std normalization (default disabled; enable via env)
     yoloUseMeanStd = false; // 默认关闭，符合常见 YOLO 预处理
         yoloMean = cv::Scalar(0.0, 0.0, 0.0);
@@ -66,10 +68,15 @@ public:
         int n=std::min<int>(batch, imgs.size()-cur);
         for(int i=0;i<n;++i){
             cv::Mat img = cv::imread(imgs[cur+i]); if(img.empty()) continue;
-            // 使用通用可配置预处理：centerCrop(可选)、BGR->RGB、缩放[0,1]、(img-mean)/std
+            // 使用 YOLO letterbox（默认）或可选的中心裁剪对齐：BGR->RGB、[0,1]、(img-mean)/std
             const cv::Scalar* meanPtr = yoloUseMeanStd ? &yoloMean : nullptr;
             const cv::Scalar* stdPtr  = yoloUseMeanStd ? &yoloStd  : nullptr;
-            cv::Mat f = preprocessImageWithMeanStd(img, W, H, optCenterCrop, /*toRGB*/true, /*scaleTo01*/true, meanPtr, stdPtr);
+            cv::Mat f;
+            if(yoloLetterbox){
+                f = preprocessLetterboxWithMeanStd(img, W, H, /*toRGB*/true, /*scaleTo01*/true, meanPtr, stdPtr, cv::Scalar(114,114,114));
+            } else {
+                f = preprocessImageWithMeanStd(img, W, H, optCenterCrop, /*toRGB*/true, /*scaleTo01*/true, meanPtr, stdPtr);
+            }
             float* dst = host.data()+ i*inputCount;
             hwcToChw(f, dst);
         }
@@ -90,6 +97,7 @@ private:
     int batch, W, H; std::string dir, cache; size_t inputCount; size_t cur{0};
     std::vector<std::string> imgs; std::vector<float> host; void* device{nullptr}; std::vector<char> cacheBuf;
     bool optCenterCrop{false};
+    bool yoloLetterbox{true};
     // YOLO mean/std control (default off)
     bool yoloUseMeanStd{false};
     cv::Scalar yoloMean{0.0, 0.0, 0.0};

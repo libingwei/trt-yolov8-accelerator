@@ -6,7 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+# Place executables under the build tree (./build/bin) to align with README usage
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+# Optionally build experimental plugins (disabled by default)
+option(YOLO_BUILD_PLUGINS "Build experimental YOLO TensorRT plugins" OFF)
+
 
 # CUDA
 find_package(CUDAToolkit QUIET)
@@ -40,4 +44,12 @@ target_compile_options(onnx_to_trt_yolo PRIVATE -Wno-deprecated-declarations)
 add_executable(yolo_trt_infer src/yolo_trt_infer.cpp)
 target_link_libraries(yolo_trt_infer PRIVATE trt_utils ${OpenCV_LIBS})
 target_compile_options(yolo_trt_infer PRIVATE -Wno-deprecated-declarations)
+
+if(YOLO_BUILD_PLUGINS)
+	add_library(decode_yolo_plugin STATIC
+		plugins/decode_yolo/decode_yolo_plugin.h)
+	target_link_libraries(decode_yolo_plugin PRIVATE trt_utils)
+	target_include_directories(decode_yolo_plugin PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/plugins)
+	target_compile_features(decode_yolo_plugin PUBLIC cxx_std_17)
+endif()
 
