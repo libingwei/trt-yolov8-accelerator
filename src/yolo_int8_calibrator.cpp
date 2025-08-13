@@ -77,8 +77,10 @@ public:
         bindings[0]=device; cur+=n; return true;
     }
     const void* readCalibrationCache(size_t& length) noexcept override {
-        cacheBuf.clear();
-        std::ifstream f(cache, std::ios::binary); if(f){ cacheBuf.assign((std::istreambuf_iterator<char>(f)), {}); }
+    cacheBuf.clear();
+    bool useCache = false; if (const char* e = std::getenv("CALIB_USE_CACHE")) { std::string v=e; if (v=="1"||v=="true") useCache=true; }
+    if (!useCache) { length=0; return nullptr; }
+    std::ifstream f(cache, std::ios::binary); if(f){ cacheBuf.assign((std::istreambuf_iterator<char>(f)), {}); }
         length = cacheBuf.size(); return length? cacheBuf.data(): nullptr;
     }
     void writeCalibrationCache(const void* c, size_t length) noexcept override {
@@ -88,6 +90,10 @@ private:
     int batch, W, H; std::string dir, cache; size_t inputCount; size_t cur{0};
     std::vector<std::string> imgs; std::vector<float> host; void* device{nullptr}; std::vector<char> cacheBuf;
     bool optCenterCrop{false};
+    // YOLO mean/std control (default off)
+    bool yoloUseMeanStd{false};
+    cv::Scalar yoloMean{0.0, 0.0, 0.0};
+    cv::Scalar yoloStd{1.0, 1.0, 1.0};
 };
 
 // Factory (simple headerless approach for demo). Real project可拆到头文件。
