@@ -6,26 +6,56 @@
 #include <opencv2/opencv.hpp>
 #include <cuda_runtime_api.h>
 #include <fstream>
+#include <algorithm>
+#include <sstream>
+#include <cstdlib>
 
-#define CHECK(status) \
-    do { auto ret = (status); if (ret != 0) { \
-        std::cerr << "CUDA failure: " << cudaGetErrorString(ret) << std::endl; abort(); } } while(0)
+#include <trt_utils/trt_common.h>
+#include <trt_utils/trt_preprocess.h>
 
-static std::vector<std::string> glob_files(const std::string& pattern){
-    glob_t g; std::vector<std::string> out; 
-    if(::glob(pattern.c_str(), 0, nullptr, &g)==0){
-        for(size_t i=0;i<g.gl_pathc;++i) out.emplace_back(g.gl_pathv[i]);
-    }
-    globfree(&g); return out;
-}
+// Use CHECK from trt_utils/trt_common.h
+
+// Use shared file collection from trt_utils
 
 class YoloInt8Calibrator : public nvinfer1::IInt8EntropyCalibrator2 {
 public:
     YoloInt8Calibrator(int bs, int W, int H, const std::string& dir, const std::string& cache)
     :batch(bs),W(W),H(H),dir(dir),cache(cache){
-        imgs = glob_files(dir+"/*.jpg");
-        auto pngs = glob_files(dir+"/*.png"); imgs.insert(imgs.end(), pngs.begin(), pngs.end());
-        if(imgs.empty()) { std::cerr<<"No calibration images in "<<dir<<"\n"; }
+    // Collect images with common extensions (case-insensitive); allow recursive via env
+    bool recursive = false; if (const char* e = std::getenv("CALIB_RECURSIVE")) { std::string v=e; if (v=="1"||v=="true") recursive=true; }
+    imgs = TrtHelpers::collectImages(dir, {"jpg","JPG","jpeg","JPEG","png","PNG"}, recursive);
+        if(imgs.empty()) { std::cerr<<"No calibration images in "<<dir<<" (supported: .jpg/.jpeg/.png)\n"; }
+
+        // Read preprocess options from env (reuse shared convention)
+        if (const char* e = std::getenv("IMAGENET_CENTER_CROP")) {
+            std::string v = e; if (v=="1" || v=="true") optCenterCrop = true;
+        }
+    // YOLO mean/std normalization (default disabled; enable via env)
+    yoloUseMeanStd = false; // 默认关闭，符合常见 YOLO 预处理
+        yoloMean = cv::Scalar(0.0, 0.0, 0.0);
+        yoloStd  = cv::Scalar(1.0, 1.0, 1.0);
+        auto parseScalar3 = [](const std::string& s, cv::Scalar& out)->bool{
+            std::stringstream ss(s);
+            std::string item; std::vector<double> v; v.reserve(3);
+            while (std::getline(ss, item, ',')) {
+                if(item.empty()) continue; v.push_back(std::stod(item));
+            }
+            if (v.size()!=3) return false;
+            // clamp std to avoid division by zero later
+            out = cv::Scalar(v[0], v[1], v[2]);
+            return true;
+        };
+        if (const char* m = std::getenv("YOLO_MEAN")) {
+            cv::Scalar tmp; if (parseScalar3(m, tmp)) { yoloMean = tmp; yoloUseMeanStd = true; }
+        }
+        if (const char* s = std::getenv("YOLO_STD")) {
+            cv::Scalar tmp; if (parseScalar3(s, tmp)) {
+                // 防止 0 标准差
+                auto eps = 1e-12; tmp[0] = std::max(tmp[0], eps); tmp[1] = std::max(tmp[1], eps); tmp[2] = std::max(tmp[2], eps);
+                yoloStd = tmp; yoloUseMeanStd = true;
+            }
+        }
+
         inputCount = 3*W*H; host.resize(batch*inputCount);
         CHECK(cudaMalloc(&device, batch*inputCount*sizeof(float)));
     }
@@ -36,12 +66,12 @@ public:
         int n=std::min<int>(batch, imgs.size()-cur);
         for(int i=0;i<n;++i){
             cv::Mat img = cv::imread(imgs[cur+i]); if(img.empty()) continue;
-            cv::Mat r; cv::resize(img, r, cv::Size(W,H)); r.convertTo(r, CV_32FC3, 1.0/255.0);
-            std::vector<cv::Mat> ch; cv::split(r, ch);
+            // 使用通用可配置预处理：centerCrop(可选)、BGR->RGB、缩放[0,1]、(img-mean)/std
+            const cv::Scalar* meanPtr = yoloUseMeanStd ? &yoloMean : nullptr;
+            const cv::Scalar* stdPtr  = yoloUseMeanStd ? &yoloStd  : nullptr;
+            cv::Mat f = preprocessImageWithMeanStd(img, W, H, optCenterCrop, /*toRGB*/true, /*scaleTo01*/true, meanPtr, stdPtr);
             float* dst = host.data()+ i*inputCount;
-            size_t plane=W*H; memcpy(dst, ch[2].data, plane*sizeof(float)); // RGB
-            memcpy(dst+plane, ch[1].data, plane*sizeof(float));
-            memcpy(dst+2*plane, ch[0].data, plane*sizeof(float));
+            hwcToChw(f, dst);
         }
         CHECK(cudaMemcpy(device, host.data(), n*inputCount*sizeof(float), cudaMemcpyHostToDevice));
         bindings[0]=device; cur+=n; return true;
@@ -57,6 +87,7 @@ public:
 private:
     int batch, W, H; std::string dir, cache; size_t inputCount; size_t cur{0};
     std::vector<std::string> imgs; std::vector<float> host; void* device{nullptr}; std::vector<char> cacheBuf;
+    bool optCenterCrop{false};
 };
 
 // Factory (simple headerless approach for demo). Real project可拆到头文件。

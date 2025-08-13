@@ -53,6 +53,24 @@ python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
 python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
 ```
 
+## INT8 标定（可选）
+
+环境变量开关：
+- CALIB_RECURSIVE=1：递归收集标定目录下所有子目录里的图片（默认关闭，仅扫描根目录）
+- IMAGENET_CENTER_CROP=1：开启“短边 256 + 中心裁剪到 HxW”的预处理（默认关闭）
+- YOLO_MEAN/YOLO_STD：逗号分隔三通道值，设置后将启用 (img-mean)/std 归一化；未设置时默认仅缩放到 [0,1]
+
+示例：
+```bash
+# 使用自备标定集目录进行 INT8 标定导出（默认不做归一化，仅 [0,1] + RGB）
+CALIB_RECURSIVE=1 \
+./build/bin/onnx_to_trt_yolo models/yolov8n.onnx models/yolov8n_int8.trt --int8 --calib-dir calibration_data
+
+# 如需与特定推理链路对齐的归一化（示例为 identity）
+YOLO_MEAN=0,0,0 YOLO_STD=1,1,1 CALIB_RECURSIVE=1 \
+./build/bin/onnx_to_trt_yolo models/yolov8n.onnx models/yolov8n_int8.trt --int8 --calib-dir calibration_data
+```
+
 ## 推理与可视化
 ```bash
 # 将导出的 ONNX 转为 TensorRT 引擎（FP16 示例）
