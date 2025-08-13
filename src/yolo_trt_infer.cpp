@@ -15,6 +15,7 @@
 #include <opencv2/opencv.hpp>
 #include <trt_utils/trt_preprocess.h>
 #include <trt_utils/trt_vision.h>
+#include <trt_utils/trt_decode.h>
 
 class Logger : public nvinfer1::ILogger{ void log(Severity s, const char* m) noexcept override { if(s<=Severity::kWARNING) std::cout<<m<<"\n"; }};
 
@@ -78,7 +79,7 @@ int main(int argc, char** argv){
 			int d0 = outShape.d[0], d1 = outShape.d[1], d2 = outShape.d[2];
 			if(d1> d2){ N=d1; C=d2; layout_NC=true; }
 			else { N=d2; C=d1; layout_NC=false; }
-		} else if(nbDims==2){
+		if(N>0 && C>=6){
 			int d0 = outShape.d[0], d1 = outShape.d[1];
 			if(d0> d1){ N=d0; C=d1; layout_NC=true; }
 			else { N=d1; C=d0; layout_NC=false; }
@@ -90,43 +91,21 @@ int main(int argc, char** argv){
 				// i in [0,N), k in [0,C)
 				if(nbDims==3){
 					if(layout_NC) return p + i*C + k; // [B,N,C]
-					else return p + k*N + i;          // [B,C,N]
+			std::vector<Detection> dets;
 				} else { // nbDims==2
 					if(layout_NC) return p + i*C + k; // [N,C]
-					else return p + k*N + i;          // [C,N]
-				}
-			};
-			for(int i=0;i<N;++i){
-				// If C==6 and row is [x1,y1,x2,y2,score,cls] (post-NMS), draw directly
-				if(C==6){
-					float x1 = *get_val(i,0), y1=*get_val(i,1), x2=*get_val(i,2), y2=*get_val(i,3);
-					float conf = *get_val(i,4); int cls = (int)std::round(*get_val(i,5));
-					if(conf<confTh) continue;
-					// coords possibly already in original scale; if not, attempt reverse letterbox assuming xyxy in net space
-					// Heuristic: if x2<=W+2 && y2<=H+2, then it's likely in net space
-					if(x2 <= W+2 && y2 <= H+2){
-						float nx1 = (x1 - lb.padX)/lb.scale;
-						float ny1 = (y1 - lb.padY)/lb.scale;
-						float nx2 = (x2 - lb.padX)/lb.scale;
-						float ny2 = (y2 - lb.padY)/lb.scale;
+				// Flatten to contiguous [N,C]
+				std::vector<float> flat(N*C);
+				for(int i=0;i<N;++i){ for(int k=0;k<C;++k){ flat[i*C+k] = *get_val(i,k); } }
+				TrtDecode::YoloDecodeConfig cfg; cfg.alreadyDecoded = true; cfg.hasObjectness=false; cfg.numClasses=C-5;
+				auto ydets = TrtDecode::decode(flat.data(), N, C, cfg, confTh, lb.padX, lb.padY, lb.scale, src.cols, src.rows, W, H);
+				dets.reserve(ydets.size()); for(auto& d: ydets) dets.push_back({d.box, d.cls, d.conf});
 						x1 = std::max(0.f, nx1); y1=std::max(0.f, ny1);
-						x2 = std::min((float)src.cols-1, nx2); y2=std::min((float)src.rows-1, ny2);
-					}
-					dets.push_back({cv::Rect2f(x1,y1,x2-x1,y2-y1), cls, conf});
-					continue;
-				}
-
-				// Assume [x,y,w,h,(obj),class scores...]
-				float x=*get_val(i,0), y=*get_val(i,1), w=*get_val(i,2), h=*get_val(i,3);
-				int cls=-1; float clsScore=0.f, obj=1.f; int clsStart=4;
-				if(C>=85){ obj = *get_val(i,4); clsStart=5; }
-				for(int k=clsStart;k<C;++k){ float v=*get_val(i,k); if(v>clsScore){ clsScore=v; cls=k-clsStart; } }
-				float conf = obj*clsScore; if(conf<confTh) continue;
-				// xywh (net) -> xyxy (orig)
-				float bx = (x - lb.padX)/lb.scale;
-				float by = (y - lb.padY)/lb.scale;
-				float bw = w / lb.scale; float bh = h / lb.scale;
-				float x1 = std::max(0.f, bx - bw/2.f);
+				std::vector<float> flat(N*C);
+				for(int i=0;i<N;++i){ for(int k=0;k<C;++k){ flat[i*C+k] = *get_val(i,k); } }
+				TrtDecode::YoloDecodeConfig cfg; cfg.alreadyDecoded = false; cfg.hasObjectness = (C>=85); cfg.numClasses = C - (cfg.hasObjectness?5:4);
+				auto ydets = TrtDecode::decode(flat.data(), N, C, cfg, confTh, lb.padX, lb.padY, lb.scale, src.cols, src.rows, W, H);
+				dets.reserve(ydets.size()); for(auto& d: ydets) dets.push_back({d.box, d.cls, d.conf});
 				float y1 = std::max(0.f, by - bh/2.f);
 				float x2 = std::min((float)src.cols-1, bx + bw/2.f);
 				float y2 = std::min((float)src.rows-1, by + bh/2.f);
