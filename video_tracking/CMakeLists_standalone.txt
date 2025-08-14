@@ -1,0 +1,79 @@
+cmake_minimum_required(VERSION 3.18)
+
+# 如果作为子项目构建，不重新声明项目
+if(NOT CMAKE_PROJECT_NAME)
+    project(video_tracking CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+
+# 设置输出目录
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
+
+# 查找OpenCV
+find_package(OpenCV REQUIRED)
+
+# 包含目录
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${OpenCV_INCLUDE_DIRS})
+
+# 创建追踪库
+add_library(video_tracking_lib
+    src/object_tracker.cpp
+    src/zone_counter.cpp
+    src/tracking_config.cpp
+)
+
+target_link_libraries(video_tracking_lib 
+    PUBLIC 
+    ${OpenCV_LIBS}
+)
+
+target_include_directories(video_tracking_lib 
+    PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# 如果trt_utils可用，构建完整程序
+if(TARGET trt_utils)
+    message(STATUS "Building video_tracking with TensorRT support")
+    
+    # 完整的视频追踪程序
+    add_executable(video_tracker
+        src/main.cpp
+        src/video_processor.cpp
+    )
+    
+    target_link_libraries(video_tracker 
+        PRIVATE 
+        video_tracking_lib
+        trt_utils
+        ${OpenCV_LIBS}
+    )
+    
+    target_compile_options(video_tracker PRIVATE -Wno-deprecated-declarations)
+else()
+    message(STATUS "Building video_tracking without TensorRT (testing only)")
+endif()
+
+# 基础测试程序（不依赖TensorRT）
+add_executable(tracking_test
+    test/basic_test.cpp
+)
+
+target_link_libraries(tracking_test 
+    PRIVATE 
+    video_tracking_lib
+    ${OpenCV_LIBS}
+)
+
+# 高级测试程序（包含可视化）
+add_executable(advanced_test
+    test/advanced_test.cpp
+)
+
+target_link_libraries(advanced_test 
+    PRIVATE 
+    video_tracking_lib
+    ${OpenCV_LIBS}
+)

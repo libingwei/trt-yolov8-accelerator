@@ -53,6 +53,18 @@ python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
 python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
 ```
 
+输出：
+```bash
+Results saved to /content/drive/MyDrive/AI-Infer-Acc
+Predict:         yolo predict task=detect model=yolov8n.onnx imgsz=640  
+Validate:        yolo val task=detect model=yolov8n.onnx imgsz=640 data=coco.yaml  
+Visualize:       https://netron.app
+Exported: models/yolov8n.onnx
+Input: images ['batch', 3, 'height', 'width'] tensor(float)
+Outputs:
+  - output0 ['batch', 'Concatoutput0_dim_1', 'anchors'] tensor(float)
+```
+
 ## INT8 标定（可选）
 
 环境变量开关：

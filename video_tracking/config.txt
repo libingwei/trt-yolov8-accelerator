@@ -1,0 +1,34 @@
+# YOLOv8 视频追踪系统配置文件
+# 模型相关配置
+engine_path=models/yolov8n.trt
+input_width=640
+input_height=640
+conf_threshold=0.25
+iou_threshold=0.5
+
+# 追踪器配置
+tracker_iou_threshold=0.5
+max_missed_frames=10
+max_trajectory_length=30
+
+# 显示配置
+show_detection_boxes=true
+show_tracking_boxes=true
+show_trajectories=true
+show_statistics=true
+show_zone_overlay=true
+
+# 输出配置
+save_video=false
+output_path=output.mp4
+output_fps=30
+
+# 计数区域配置 (通过代码设置，这里作为参考)
+# Zone1: 矩形区域 (100,100) -> (500,400)
+# Line1: 垂直线 (300,50) -> (300,600)
+
+# 性能优化建议:
+# - 降低 input_width/input_height 可提高FPS
+# - 提高 conf_threshold 可减少误检
+# - 调整 tracker_iou_threshold 适应不同场景
+# - 减少 max_trajectory_length 可节省内存
