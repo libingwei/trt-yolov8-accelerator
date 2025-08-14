@@ -6,8 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# Place executables under the build tree (./build/bin) to align with README usage
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+# Place executables under the top-level build tree (../../build/bin) when built as subproject
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    # Standalone build: use local bin directory
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+else()
+    # Subproject build: use top-level bin directory
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
 # Optionally build experimental plugins (disabled by default)
 option(YOLO_BUILD_PLUGINS "Build experimental YOLO TensorRT plugins" OFF)
 
@@ -70,4 +76,7 @@ if(YOLO_BUILD_PLUGINS)
 	target_compile_definitions(onnx_to_trt_yolo PRIVATE YOLO_BUILD_PLUGINS)
 	target_compile_definitions(yolo_trt_infer PRIVATE YOLO_BUILD_PLUGINS)
 endif()
+
+# Add video tracking module
+add_subdirectory(video_tracking)
 
