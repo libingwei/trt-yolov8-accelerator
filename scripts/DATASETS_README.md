@@ -5,17 +5,18 @@
 ### 1. Download Datasets
 
 ```bash
+# 从仓库根目录运行：
 # Download all datasets (COCO + test images + ImageNet samples)
-python scripts/download_yolov8_datasets.py --dataset all
+python3 projects/trt-yolov8-accelerator/scripts/download_yolov8_datasets.py --dataset all
 
 # Download only COCO validation set
-python scripts/download_yolov8_datasets.py --dataset coco
+python3 projects/trt-yolov8-accelerator/scripts/download_yolov8_datasets.py --dataset coco
 
-# Download only test images  
-python scripts/download_yolov8_datasets.py --dataset test
+# Download only test images
+python3 projects/trt-yolov8-accelerator/scripts/download_yolov8_datasets.py --dataset test
 
 # Custom data directory and calibration size
-python scripts/download_yolov8_datasets.py --data-dir /path/to/datasets --calib-images 200
+python3 projects/trt-yolov8-accelerator/scripts/download_yolov8_datasets.py --data-dir /path/to/datasets --calib-images 200
 ```
 
 ### 2. Use with TensorRT Tools
@@ -39,17 +40,18 @@ python scripts/download_yolov8_datasets.py --data-dir /path/to/datasets --calib-
 After running the download script, you'll have:
 
 ```
-datasets/
+# 默认目录结构（以 `--data-dir ./projects/trt-yolov8-accelerator/datasets` 为例）
+projects/trt-yolov8-accelerator/datasets/
 ├── coco/
 │   ├── val2017/           # 5,000 validation images
 │   └── annotations/       # COCO annotations
 ├── yolov8_test/
-│   ├── bus.jpg           # Test images
+│   ├── bus.jpg            # Test images
 │   └── zidane.jpg
 ├── imagenet_sample/       # Sample ImageNet images
 └── calibration/
-    ├── coco_subset/      # 100 COCO images for INT8 calibration
-    └── imagenet_subset/  # 100 ImageNet images for calibration
+  ├── coco_subset/       # 100 COCO images for INT8 calibration
+  └── imagenet_subset/   # 100 ImageNet images for calibration
 ```
 
 ## Available Datasets
@@ -79,11 +81,12 @@ datasets/
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--data-dir` | `./datasets` | Directory to store all datasets |
+| `--data-dir` | `./datasets` | Directory to store all datasets. When running from repository root we recommend `projects/trt-yolov8-accelerator/datasets` to keep files inside the project. |
 | `--dataset` | `all` | Which dataset to download (`coco`, `imagenet`, `test`, `all`) |
 | `--calib-images` | `100` | Number of images for calibration subset |
 | `--imagenet-samples` | `1000` | Number of ImageNet sample images |
 
+Note: COCO full validation needs ~1GB disk space. Ensure sufficient space and a stable network when downloading.
 ## Advanced Usage
 
 ### Custom Calibration Dataset

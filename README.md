@@ -31,26 +31,59 @@
 ```
 
 ## 使用（最小流程）
+
+下面的示例假定你在仓库根目录（也就是 `/workspace/AI-Infer-Acc`）执行命令；若你切换到项目子目录，请相应调整路径。
+
+1) 安装 Python 依赖（用于导出/验证 ONNX）
+
 ```bash
-# 1) 安装 Python 依赖（导出/验证 ONNX）
-pip install -r requirements.txt
-
-# 2) 导出 YOLOv8 ONNX（默认 yolov8n.pt，需要可自备权重）
-python scripts/export_yolov8_onnx.py --weights yolov8n.pt --outdir models --imgsz 640
-
-# 3) 构建 Docker（包含 TensorRT 与依赖）
-docker build -t trt-yolov8-accelerator:dev -f docker/Dockerfile .
-
-# 4) 进入容器后构建与运行占位程序
-# docker run --gpus all -it --rm -v $PWD:/workspace trt-yolov8-accelerator:dev bash
-# ./build/bin/onnx_to_trt_yolo
-# ./build/bin/yolo_trt_infer
+# 从仓库根目录运行
+pip install -r projects/trt-yolov8-accelerator/requirements.txt
 ```
 
-说明：导出脚本默认优先使用 GPU（cuda:0），若不可用或失败会自动回退到 CPU。可手动指定：
+2) 导出 YOLOv8 为 ONNX
+
 ```bash
-python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
-python scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
+# 使用 ultralytics 导出（默认从 weights 同级生成 .onnx）
+# 在仓库根目录运行：
+python3 projects/trt-yolov8-accelerator/scripts/export_yolov8_onnx.py --weights yolov8n.pt --outdir projects/trt-yolov8-accelerator/models --imgsz 640
+
+# 如果在项目子目录运行（projects/trt-yolov8-accelerator）：
+python3 scripts/export_yolov8_onnx.py --weights yolov8n.pt --outdir models --imgsz 640
+```
+
+备注：导出脚本会优先使用 GPU (cuda:0) 如果可用；若导出失败会回退到 CPU。你也可以显式指定设备：
+
+```bash
+# 指定 GPU
+python3 projects/trt-yolov8-accelerator/scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cuda:0
+# 指定 CPU
+python3 projects/trt-yolov8-accelerator/scripts/export_yolov8_onnx.py --weights yolov8n.pt --device cpu
+```
+
+3) 下载测试数据与标定数据（可选）
+
+```bash
+# 从仓库根目录运行，默认下载到 projects/trt-yolov8-accelerator/datasets
+python3 projects/trt-yolov8-accelerator/scripts/download_yolov8_datasets.py --data-dir projects/trt-yolov8-accelerator/datasets --dataset all
+```
+
+注意：COCO 全量数据较大（约 1GB），如果只做快速验证可只下载 `--dataset test` 或 `--dataset imagenet` 的样本。
+
+4) 构建并运行（TensorRT 环境通常在容器或带有 TensorRT 的系统上）
+
+```bash
+# 构建 Docker（可选）
+docker build -t trt-yolov8-accelerator:dev -f projects/trt-yolov8-accelerator/docker/Dockerfile .
+
+# 构建工程（在容器或系统上，示例：在仓库根目录）
+cmake -S . -B build
+cmake --build build -- -j4
+
+# 示例：使用已构建的转换与推理二进制（路径相对于仓库根目录）
+./build/bin/onnx_to_trt_yolo projects/trt-yolov8-accelerator/models/yolov8n.onnx projects/trt-yolov8-accelerator/models/yolov8n_fp16.trt --fp16 --min 1x3x320x320 --opt 1x3x640x640 --max 16x3x1280x1280
+
+./build/bin/yolo_trt_infer projects/trt-yolov8-accelerator/models/yolov8n_fp16.trt --image projects/trt-yolov8-accelerator/assets/sample.jpg --H 640 --W 640 --conf 0.25 --iou 0.5
 ```
 
 输出：

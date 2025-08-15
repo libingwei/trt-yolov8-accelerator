@@ -18,6 +18,9 @@ struct TrackedObject {
     bool is_active;
     int missed_frames;
     
+    TrackedObject() : id(0), class_id(0), bbox(), confidence(0.0f), center(0.0f, 0.0f),
+        last_seen(std::chrono::steady_clock::now()), is_active(false), missed_frames(0) {}
+
     TrackedObject(int _id, int _class_id, const cv::Rect2f& _bbox, float _conf)
         : id(_id), class_id(_class_id), bbox(_bbox), confidence(_conf),
           center(_bbox.x + _bbox.width/2, _bbox.y + _bbox.height/2),
